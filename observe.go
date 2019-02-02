@@ -5,26 +5,68 @@ import (
 	"fmt"
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/stats"
+	"go.opencensus.io/stats/view"
+	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
+	"gonum.org/v1/gonum/floats"
+	"sync"
 	"time"
 )
 
 const (
-	SPAN_DATA= "OPENCENSUS_SPAN_PTR"
 	EntryKey = "OBSERVE_ENTRY_KEY"
 	ErrorKey = "error"
 )
 
+type Red struct { // rate, errors, duration
+	count *stats.Int64Measure
+	duration *stats.Float64Measure
+	nameOverride *string
+	min time.Duration
+	max time.Duration
+	buckets int
+	spacing Spacing
+	*sync.Once  // Do I need to keep pointer to once, or is it good without it?
+}
+
+type Spacing int
+
+const (
+	Linear    Spacing = iota
+	LogLinear Spacing = iota
+)
+
+func NewSimpleRED() *Red{
+	return NewRED(
+		time.Millisecond,
+		10 * time.Second,
+		20,
+		LogLinear,
+	)
+}
+
+func NewRED(minDuration time.Duration, maxDuration time.Duration, buckets int, spacing Spacing, nameOverride...string) *Red {
+	if len(nameOverride) > 1 {
+		logrus.Fatal("cannot have more than 1 in name override")
+	}
+	return &Red{
+		min: minDuration,
+		max: maxDuration,
+		buckets:buckets,
+		spacing:spacing,
+		Once: &sync.Once{},
+	}
+}
+
 type Observe struct {
 	ctx context.Context
+	name string
+	start             time.Time
 	entry             *logrus.Entry
 	span              *trace.Span
-	start             time.Time
 	traceStartOptions []trace.StartOption
 	propagateLogEntry bool
-	durationSeconds   *stats.Float64Measure
-	totalCnt          *stats.Int64Measure
-	errCnt            *stats.Int64Measure
+	Red
 }
 
 
@@ -44,8 +86,47 @@ func PropagateLogEntry() Option {
 	}
 }
 
+func AddREDMetrics(r *Red) Option {
+	return func(cfg *Observe) {
+		r.Do(func() {
+			r.count = stats.Int64(cfg.name, "Total cnt", stats.UnitDimensionless)
+			r.duration = stats.Float64(cfg.name, "Duration", "seconds")
+
+			bounds := make([]float64, r.buckets + 1)
+			bounds[0] = 0
+			ll := float64(r.min) / float64(time.Second)
+			rr := float64(r.max) / float64(time.Second)
+			switch r.spacing {
+			case Linear:
+				floats.Span(bounds, ll, rr)
+			case LogLinear:
+				floats.LogSpan(bounds, ll, rr)
+			default:
+				logrus.Panicf("unknown spacing %v", r.spacing)
+			}
+
+			key, rerr := tag.NewKey("error")
+			if rerr != nil {
+				logrus.WithError(rerr).Panicln()
+			}
+
+			if err := view.Register(&view.View{
+				Name:        cfg.name,
+				Description: "Duration",
+				Measure:     r.duration,
+				TagKeys: []tag.Key{key},
+				Aggregation: view.Distribution(bounds...),
+			}); err != nil {
+				logrus.WithError(err).Fatalln("cannot register view")
+			}
+		})
+		cfg.Red = *r
+	}
+}
+
 func FromContext(ctx context.Context, name string, opts...Option) (context.Context, *Observe){
 	cfg := &Observe{
+		name: name,
 		start:time.Now(),
 	}
 	for _, o := range opts {
@@ -54,9 +135,10 @@ func FromContext(ctx context.Context, name string, opts...Option) (context.Conte
 	ctx, span := trace.StartSpan(ctx, name, cfg.traceStartOptions...)
 	cfg.span = span
 	if v := ctx.Value(EntryKey); v != nil && cfg.propagateLogEntry {
-		cfg.entry = v.(*logrus.Entry).WithField(SPAN_DATA, span)
+		cfg.entry = v.(*logrus.Entry)
 	} else {
-		cfg.entry = logrus.WithField(SPAN_DATA, span)
+		cfg.entry = logrus.WithField("", "")
+		delete(cfg.entry.Data, "")
 	}
 	ctx = context.WithValue(ctx, EntryKey, cfg.entry)
 	cfg.ctx = ctx
@@ -65,21 +147,42 @@ func FromContext(ctx context.Context, name string, opts...Option) (context.Conte
 
 func (obs *Observe) End(retErr *error) {
 	defer obs.span.End()
-	if retErr == nil {
-		return
+	var err error
+	if retErr != nil {
+		err = *retErr
 	}
-	err := *retErr
-	if err != nil {
+
+	key, rerr := tag.NewKey("error")
+	if rerr != nil {
+		obs.entry.WithError(rerr).Panicln()
+	}
+
+	tags := make([]tag.Mutator, 1)
+	switch err {
+	case nil:
+		tags[0] = tag.Upsert(key, "")
+	default:
+		// should I put error type of string here?
+		// Error string could lead to high cardinality
+		// Thus error type is enough for red metrics and some breakdown
+		tags[0] = tag.Upsert(key, fmt.Sprintf("%T", err))
 		obs.span.AddAttributes(trace.StringAttribute(ErrorKey, err.Error()))
-		if obs.errCnt != nil {
-			stats.Record(obs.ctx, obs.errCnt.M(1)))
+	}
+
+	if obs.count != nil {
+		if err := stats.RecordWithTags(obs.ctx, tags, obs.count.M(1), ); err != nil {
+			obs.entry.WithError(err).Errorln()
 		}
 	}
-	if obs.durationSeconds != nil {
-		stats.Record(obs.ctx, obs.durationSeconds.M(float64(time.Now().Sub(obs.start)) / float64(time.Second)))
-	}
-	if obs.totalCnt != nil {
-		stats.Record(obs.ctx, obs.totalCnt.M(1))
+	if obs.duration != nil {
+		if err := stats.RecordWithTags(
+			obs.ctx,
+			tags,
+			obs.duration.M(float64(time.Now().Sub(obs.start)) / float64(time.Second)),
+		); err != nil {
+			obs.entry.WithError(err).Errorln()
+		}
+		stats.Record(obs.ctx, )
 	}
 }
 
