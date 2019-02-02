@@ -16,6 +16,7 @@ const (
 )
 
 type Observe struct {
+	ctx context.Context
 	entry             *logrus.Entry
 	span              *trace.Span
 	start             time.Time
@@ -58,6 +59,7 @@ func FromContext(ctx context.Context, name string, opts...Option) (context.Conte
 		cfg.entry = logrus.WithField(SPAN_DATA, span)
 	}
 	ctx = context.WithValue(ctx, EntryKey, cfg.entry)
+	cfg.ctx = ctx
 	return ctx, cfg
 }
 
@@ -70,14 +72,14 @@ func (obs *Observe) End(retErr *error) {
 	if err != nil {
 		obs.span.AddAttributes(trace.StringAttribute(ErrorKey, err.Error()))
 		if obs.errCnt != nil {
-			obs.errCnt.M(1)
+			stats.Record(obs.ctx, obs.errCnt.M(1)))
 		}
 	}
 	if obs.durationSeconds != nil {
-		obs.durationSeconds.M(float64(time.Now().Sub(obs.start)) / float64(time.Second))
+		stats.Record(obs.ctx, obs.durationSeconds.M(float64(time.Now().Sub(obs.start)) / float64(time.Second)))
 	}
 	if obs.totalCnt != nil {
-		obs.totalCnt.M(1)
+		stats.Record(obs.ctx, obs.totalCnt.M(1))
 	}
 }
 
