@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/sirupsen/logrus"
+	"go.opencensus.io/stats"
 	"go.opencensus.io/trace"
+	"time"
 )
 
 const (
@@ -14,10 +16,14 @@ const (
 )
 
 type Observe struct {
-	entry *logrus.Entry
-	span *trace.Span
+	entry             *logrus.Entry
+	span              *trace.Span
+	start             time.Time
 	traceStartOptions []trace.StartOption
 	propagateLogEntry bool
+	durationSeconds   *stats.Float64Measure
+	totalCnt          *stats.Int64Measure
+	errCnt            *stats.Int64Measure
 }
 
 
@@ -39,6 +45,7 @@ func PropagateLogEntry() Option {
 
 func FromContext(ctx context.Context, name string, opts...Option) (context.Context, *Observe){
 	cfg := &Observe{
+		start:time.Now(),
 	}
 	for _, o := range opts {
 		o(cfg)
@@ -62,6 +69,15 @@ func (obs *Observe) End(retErr *error) {
 	err := *retErr
 	if err != nil {
 		obs.span.AddAttributes(trace.StringAttribute(ErrorKey, err.Error()))
+		if obs.errCnt != nil {
+			obs.errCnt.M(1)
+		}
+	}
+	if obs.durationSeconds != nil {
+		obs.durationSeconds.M(float64(time.Now().Sub(obs.start)) / float64(time.Second))
+	}
+	if obs.totalCnt != nil {
+		obs.totalCnt.M(1)
 	}
 }
 
