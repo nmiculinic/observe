@@ -226,7 +226,7 @@ func (obs *Observe) Log(level logrus.Level, args ...interface{}) {
 	if !obs.entry.Logger.IsLevelEnabled(level) {
 		return
 	}
-	msg := fmt.Sprint(args)
+	msg := fmt.Sprint(args...)
 	obs.span.Annotate(nil, msg)
 	obs.entry.Log(level, msg)
 }
