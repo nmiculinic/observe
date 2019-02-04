@@ -209,6 +209,8 @@ func (obs *Observe) addSpanAttribute(key string, value interface{}) {
 		obs.span.AddAttributes(trace.Int64Attribute(key, int64(value.(uint32))))
 	case uint64:
 		obs.span.AddAttributes(trace.Int64Attribute(key, int64(value.(uint64))))
+	case fmt.Stringer:
+		obs.span.AddAttributes(trace.StringAttribute(key, value.(fmt.Stringer).String()))
 	default:
 		// cannot convert, silently dropping
 	}
@@ -226,7 +228,7 @@ func (obs *Observe) Log(level logrus.Level, args ...interface{}) {
 	if !obs.entry.Logger.IsLevelEnabled(level) {
 		return
 	}
-	msg := fmt.Sprint(args)
+	msg := fmt.Sprint(args...)
 	obs.span.Annotate(nil, msg)
 	obs.entry.Log(level, msg)
 }
