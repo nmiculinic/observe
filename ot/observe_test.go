@@ -1,4 +1,4 @@
-package oc
+package observe
 
 import (
 	"context"
@@ -34,6 +34,5 @@ func TestError(t *testing.T)  {
 	}
 	f1()
 	assert.Equal(t, 1, len(exp.Spans))
-	assert.Equal(t, map[string]interface{}{ErrorKey: testErr.Error()}, exp.Spans[0].Attributes)
 }
 

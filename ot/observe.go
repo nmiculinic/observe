@@ -1,4 +1,4 @@
-package oc
+package observe
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/sirupsen/logrus"
+	"strings"
+	"sync"
 
 	"time"
 )
@@ -33,16 +35,18 @@ func AddTraceStartOptions(opts...opentracing.StartSpanOption) Option {
 	}
 }
 
+var cnts = make(map[string]*prometheus.CounterVec)
+var rnk = make(map[string]prometheus.Summary)
+var m sync.RWMutex
+
 func FromContext(ctx context.Context, name string, opts...Option) (context.Context, *Observe){
+	promName := strings.Replace(name, "/", "_", -1)
 	cfg := &Observe{
 		name: name,
 		start:time.Now(),
-		cnt: promauto.NewCounterVec(prometheus.CounterOpts{Name:name}, []string{"error"}),
-		rnk: prometheus.NewSummary(prometheus.SummaryOpts{
-			Name:name,
-			Objectives:prometheus.DefObjectives,
-		}),
 	}
+	cfg.fill(promName)
+
 	for _, o := range opts {
 		o(cfg)
 	}
@@ -55,16 +59,38 @@ func FromContext(ctx context.Context, name string, opts...Option) (context.Conte
 	return ctx, cfg
 }
 
+func (obs* Observe) fill (name string) {
+	// fast path
+	m.RLock()
+	if _, ok := cnts[name]; ok {
+		obs.cnt = cnts[name]
+		obs.rnk = rnk[name]
+		m.RUnlock()
+		return
+	}
+	m.RUnlock()
+
+	m.Lock()
+	defer m.Unlock()
+	if _, ok := cnts[name]; ok {
+		obs.cnt = cnts[name]
+		obs.rnk = rnk[name]
+		return
+	}
+
+	cnts[name] = promauto.NewCounterVec(prometheus.CounterOpts{Name:name + "_total"}, []string{"error"})
+	rnk[name] = promauto.NewSummary(prometheus.SummaryOpts{
+		Name:name + "_duration_seconds",
+		Objectives:prometheus.DefObjectives,
+	})
+	obs.cnt = cnts[name]
+	obs.rnk = rnk[name]
+}
+
 func (obs *Observe) End(retErr *error) {
-	defer obs.span.Finish()
-	defer obs.rnk.Observe(
-		float64(time.Now().Sub(obs.start)) / float64(time.Second),
-	)
 	var err error
-	{
-		if retErr != nil {
-			err = *retErr
-		}
+	if retErr != nil {
+		err = *retErr
 	}
 	switch err {
 	case nil:
@@ -73,6 +99,10 @@ func (obs *Observe) End(retErr *error) {
 		obs.cnt.With(prometheus.Labels{"error": err.Error()}).Add(1)
 		ext.Error.Set(obs.span, true)
 	}
+	obs.span.Finish()
+	obs.rnk.Observe(
+		float64(time.Now().Sub(obs.start)) / float64(time.Second),
+	)
 }
 
 func (obs *Observe) AddField(key string, value interface{}) {

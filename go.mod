@@ -2,6 +2,7 @@ module github.com/nmiculinic/observe
 
 require (
 	github.com/opentracing/opentracing-go v1.0.2
+	github.com/prometheus/client_golang v0.9.2
 	github.com/sirupsen/logrus v1.3.0
 	github.com/stretchr/testify v1.3.0
 	go.opencensus.io v0.19.0
