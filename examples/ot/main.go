@@ -4,11 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/nmiculinic/observe/ot"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sirupsen/logrus"
-	"go.opencensus.io/examples/exporter"
-	"go.opencensus.io/exporter/prometheus"
-	"go.opencensus.io/stats/view"
-	"go.opencensus.io/trace"
 	"log"
 	"math/rand"
 	"net/http"
@@ -29,20 +26,11 @@ func f() (retErr error) {
 }
 
 func main() {
-	e := exporter.PrintExporter{}
-	trace.RegisterExporter(&e)
-	trace.ApplyConfig(trace.Config{DefaultSampler: trace.AlwaysSample()})
-	pe, err := prometheus.NewExporter(prometheus.Options{})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	view.RegisterExporter(pe)
-	view.SetReportingPeriod(time.Second)
 
 	go func() {
 		addr := "[::]:6070"
 		log.Printf("Serving at %s", addr)
-		http.Handle("/metrics", pe)
+		http.Handle("/metrics", promhttp.Handler())
 		log.Fatal(http.ListenAndServe(addr, nil))
 	}()
 
