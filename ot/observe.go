@@ -101,6 +101,13 @@ func (obs *Observe) AddField(key string, value interface{}) {
 	obs.addSpanAttribute(key, value)
 }
 
+// WithError created new shallow copy observer with logrus error set
+func (obs *Observe) WithError(err error) *Observe {
+	o := *obs
+	o.entry = o.entry.WithError(err)
+	return &o
+}
+
 func (obs *Observe) addSpanAttribute(key string, value interface{}) {
 	obs.Span.SetTag(key, value)
 }
