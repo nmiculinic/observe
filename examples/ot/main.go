@@ -66,7 +66,7 @@ func main() {
 	)
 
 	go func() {
-		addr := "[::]:6070"
+		addr := "[::]:6060"
 		log.Printf("Serving at %s", addr)
 		http.Handle("/metrics", promhttp.Handler())
 		log.Fatal(http.ListenAndServe(addr, nil))

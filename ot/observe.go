@@ -16,6 +16,7 @@ type StaticObserveFactory struct {
 	name string
 	cnt *prometheus.CounterVec
 	rnk prometheus.Summary
+	hst prometheus.Histogram
 }
 
 func New(name string) StaticObserveFactory {
@@ -24,8 +25,16 @@ func New(name string) StaticObserveFactory {
 		name:name,
 		cnt: promauto.NewCounterVec(prometheus.CounterOpts{Name:promName + "_total"}, []string{"error"}),
 		rnk: promauto.NewSummary(prometheus.SummaryOpts{
-			Name:promName + "_duration_seconds",
+			Name:promName + "approx_duration_seconds",
 		Objectives:prometheus.DefObjectives,
+		}),
+		hst: promauto.NewHistogram(prometheus.HistogramOpts{
+			Name:promName + "_duration_seconds",
+			Buckets:prometheus.ExponentialBuckets(
+				float64(100 * time.Microsecond) / float64(time.Second),
+				2.0,
+				16,
+			),
 		}),
 	}
 }
@@ -90,9 +99,9 @@ func (obs *Observe) End(retErr *error) {
 		obs.Span.LogKV("error_msg", err.Error())
 	}
 	obs.Span.Finish()
-	obs.rnk.Observe(
-		float64(time.Now().Sub(obs.start)) / float64(time.Second),
-	)
+	dur := float64(time.Now().Sub(obs.start)) / float64(time.Second)
+	obs.rnk.Observe(dur)
+	obs.hst.Observe(dur)
 }
 
 // AddField adds persistant field to this Span. It's attribute in traces and field in logrus
