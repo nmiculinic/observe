@@ -3,35 +3,36 @@ package observe
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/sirupsen/logrus"
-	"strings"
-	"time"
 )
 
 type StaticObserveFactory struct {
 	name string
-	cnt *prometheus.CounterVec
-	rnk prometheus.Summary
-	hst prometheus.Histogram
+	cnt  *prometheus.CounterVec
+	rnk  prometheus.Summary
+	hst  prometheus.Histogram
 }
 
 func New(name string) StaticObserveFactory {
 	promName := strings.Replace(name, "/", "_", -1)
 	return StaticObserveFactory{
-		name:name,
-		cnt: promauto.NewCounterVec(prometheus.CounterOpts{Name:promName + "_total"}, []string{"error"}),
+		name: name,
+		cnt:  promauto.NewCounterVec(prometheus.CounterOpts{Name: promName + "_total"}, []string{"error"}),
 		rnk: promauto.NewSummary(prometheus.SummaryOpts{
-			Name:promName + "approx_duration_seconds",
-		Objectives:prometheus.DefObjectives,
+			Name:       promName + "_approx_duration_seconds",
+			Objectives: prometheus.DefObjectives,
 		}),
 		hst: promauto.NewHistogram(prometheus.HistogramOpts{
-			Name:promName + "_duration_seconds",
-			Buckets:prometheus.ExponentialBuckets(
-				float64(100 * time.Microsecond) / float64(time.Second),
+			Name: promName + "_duration_seconds",
+			Buckets: prometheus.ExponentialBuckets(
+				float64(100*time.Microsecond)/float64(time.Second),
 				2.0,
 				16,
 			),
@@ -46,10 +47,10 @@ func New(name string) StaticObserveFactory {
 // It's intended usage is in the first two lines of the function (which can be called
 // from multiple goroutines, that's fine)
 //
-func (f StaticObserveFactory) FromContext(ctx context.Context, opts...Option) (context.Context, *Observe){
+func (f StaticObserveFactory) FromContext(ctx context.Context, opts ...Option) (context.Context, *Observe) {
 	cfg := &Observe{
 		StaticObserveFactory: f,
-		start:time.Now(),
+		start:                time.Now(),
 	}
 
 	for _, o := range opts {
@@ -73,9 +74,8 @@ type Observe struct {
 	StaticObserveFactory
 }
 
-
 // WithTraceOptions
-func WithTraceOptions(opts...opentracing.StartSpanOption) Option {
+func WithTraceOptions(opts ...opentracing.StartSpanOption) Option {
 	return func(cfg *Observe) {
 		for _, o := range opts {
 			cfg.opts = append(cfg.opts, o)
@@ -132,8 +132,7 @@ func (obs *Observe) Log(level logrus.Level, args ...interface{}) {
 
 /*
 bunch of c/p from logrus
- */
-
+*/
 
 func (obs *Observe) Trace(args ...interface{}) {
 	obs.Log(logrus.TraceLevel, args...)
