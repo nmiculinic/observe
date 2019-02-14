@@ -3,7 +3,9 @@ package observe
 import (
 	"context"
 	"fmt"
+	"gopkg.in/yaml.v2"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -13,6 +15,12 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	CounterSuffix = "_total"
+	RankEstimationSuffix = "_approx_duration_seconds"
+	HistogramSuffix = "_duration_seconds"
+)
+
 type StaticObserveFactory struct {
 	name string
 	cnt  *prometheus.CounterVec
@@ -20,17 +28,48 @@ type StaticObserveFactory struct {
 	hst  prometheus.Histogram
 }
 
+type Rule struct {
+	Record string
+	Expr string
+}
+
+var inventory = &sync.Map{}
+
+// GeneratesRules generated prometheus rules for time series aggregation
+func GenerateRules() string {
+	rules := make([]Rule, 0)
+	inventory.Range(func(key, value interface{}) bool {
+		name := key.(string)
+		rules = append(rules, Rule{
+			Record: fmt.Sprintf("%s:sum_rate", name + CounterSuffix),
+			Expr: fmt.Sprintf("sum by (namespace, service) (rate(%s[5m]))", name + CounterSuffix),
+		},
+		Rule{
+			Record: fmt.Sprintf("%s:error_rate", name),
+			Expr: fmt.Sprintf("sum by (namespace, service) (rate(%s[5m]))", name + CounterSuffix),
+		},
+		)
+		return true
+	})
+	o , err :=yaml.Marshal(rules)
+	if err != nil {
+		logrus.WithError(err).Fatal()
+	}
+	return string(o)
+}
+
 func New(name string) StaticObserveFactory {
 	promName := strings.Replace(name, "/", "_", -1)
+	inventory.Store(promName, "")
 	return StaticObserveFactory{
 		name: name,
-		cnt:  promauto.NewCounterVec(prometheus.CounterOpts{Name: promName + "_total"}, []string{"error"}),
+		cnt:  promauto.NewCounterVec(prometheus.CounterOpts{Name: promName + CounterSuffix}, []string{"error"}),
 		rnk: promauto.NewSummary(prometheus.SummaryOpts{
-			Name:       promName + "_approx_duration_seconds",
+			Name:       promName + RankEstimationSuffix,
 			Objectives: prometheus.DefObjectives,
 		}),
 		hst: promauto.NewHistogram(prometheus.HistogramOpts{
-			Name: promName + "_duration_seconds",
+			Name: promName + HistogramSuffix,
 			Buckets: prometheus.ExponentialBuckets(
 				float64(100*time.Microsecond)/float64(time.Second),
 				2.0,
@@ -47,7 +86,7 @@ func New(name string) StaticObserveFactory {
 // It's intended usage is in the first two lines of the function (which can be called
 // from multiple goroutines, that's fine)
 //
-func (f StaticObserveFactory) FromContext(ctx context.Context, opts ...Option) (context.Context, *Observe) {
+func (f StaticObserveFactory) FromContext(pctx context.Context, opts ...Option) (context.Context, *Observe) {
 	cfg := &Observe{
 		StaticObserveFactory: f,
 		start:                time.Now(),
@@ -56,7 +95,7 @@ func (f StaticObserveFactory) FromContext(ctx context.Context, opts ...Option) (
 	for _, o := range opts {
 		o(cfg)
 	}
-	span, ctx := opentracing.StartSpanFromContext(ctx, cfg.name, cfg.opts...)
+	span, ctx := opentracing.StartSpanFromContext(pctx, cfg.name, cfg.opts...)
 	cfg.Span = span
 	cfg.entry = logrus.WithField("", "")
 	delete(cfg.entry.Data, "")

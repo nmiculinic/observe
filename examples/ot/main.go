@@ -16,9 +16,16 @@ import (
 	"github.com/uber/jaeger-client-go/config"
 )
 
+var staticDep = observe.New("dep")
+func dep(ctx context.Context) {
+	_, obs := staticDep.FromContext(ctx)
+	defer obs.End(nil)
+	time.Sleep(time.Second)
+}
+
 var staticF = observe.New("serios/function")
 func f() (retErr error) {
-	_, obs := staticF.FromContext(context.Background())
+	ctx, obs := staticF.FromContext(context.Background())
 	defer obs.End(&retErr)
 	time.Sleep(time.Duration(int64(rand.Float64() * float64(time.Second))))
 	obs.AddField("g", 4)
@@ -26,6 +33,7 @@ func f() (retErr error) {
 	if rand.Float64() < 0.2 {
 		return fmt.Errorf("error")
 	}
+	dep(ctx)
 	return nil
 }
 
@@ -82,5 +90,6 @@ func main() {
 			}
 		}()
 	}
+	fmt.Println(observe.GenerateRules())
 	wg.Wait()
 }

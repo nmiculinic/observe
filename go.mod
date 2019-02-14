@@ -14,4 +14,5 @@ require (
 	go.uber.org/atomic v1.3.2 // indirect
 	gonum.org/v1/gonum v0.0.0-20190201152626-c07f678f3f61
 	gonum.org/v1/netlib v0.0.0-20190119082159-9be13e02fd56 // indirect
+	gopkg.in/yaml.v2 v2.2.2
 )
